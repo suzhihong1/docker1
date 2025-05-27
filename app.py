@@ -38,6 +38,6 @@ def handle_message(event):
     # 使用 reply_token 回覆訊息
     line_bot_api.reply_message(event.reply_token, reply)
 
-# 主程式入口點：啟動 Flask 應用在 0.0.0.0 的 8000 port 上
+# 主程式入口點：啟動 Flask 應用在 0.0.0.0 的 8080 port 上
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=8080)
