@@ -1,43 +1,73 @@
-# 匯入 Flask 與 LINE Bot SDK 所需模組
-from flask import Flask, request, abort  # 用於建立網頁應用與處理 HTTP 請求
-from linebot import LineBotApi, WebhookHandler  # LINE SDK 的核心類別
-from linebot.exceptions import InvalidSignatureError  # 用來處理驗證失敗的例外狀況
-from linebot.models import MessageEvent, TextMessage, TextSendMessage  # 處理文字訊息的模型
-import os  # 用來讀取環境變數
+from flask import Flask, request, abort
+from linebot import LineBotApi, WebhookHandler
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+import yfinance as yf
+import os
+from dotenv import load_dotenv
 
-# 建立 Flask 應用
+load_dotenv()  # 讀取 .env 內的環境變數
+
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
 app = Flask(__name__)
 
-# 初始化 LINE Bot API 與 Webhook 處理器，從環境變數讀取金鑰
-line_bot_api = LineBotApi(os.getenv("LINE_CHANNEL_ACCESS_TOKEN"))
-handler = WebhookHandler(os.getenv("LINE_CHANNEL_SECRET"))
+def get_stock_price(symbol: str):
+    ticker = yf.Ticker(symbol)
+    data = ticker.history(period="1d", interval="1m")
+    if data.empty:
+        return None
+    latest_price = data['Close'].iloc[-1]
+    return latest_price
 
-# 定義 webhook 接收點，LINE 平台會對這個路徑 POST 訊息
-@app.route("/callback", methods=["POST"])
+@app.route("/callback", methods=['POST'])
 def callback():
-    # 從 HTTP 標頭中取得 X-Line-Signature（LINE 用來驗證請求是否合法）
-    signature = request.headers["X-Line-Signature"]
-    # 取得 POST 的請求內容（JSON 字串）
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
 
     try:
-        # 驗證簽章並處理事件
         handler.handle(body, signature)
-    except InvalidSignatureError:
-        # 簽章不正確時，回傳 400 錯誤
+    except Exception as e:
+        print("Webhook Error:", e)
         abort(400)
 
-    # 成功處理後回傳 OK 給 LINE 平台
-    return "OK"
+    return 'OK'
 
-# 設定事件處理函式：當接收到使用者發送的文字訊息時執行
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    # 回覆使用者一段訊息：「你說了：xxxx」
-    reply = TextSendMessage(text=f"你說了：{event.message.text}")
-    # 使用 reply_token 回覆訊息
-    line_bot_api.reply_message(event.reply_token, reply)
+    user_text = event.message.text.strip()
 
-# 主程式入口點：啟動 Flask 應用在 0.0.0.0 的 8080 port 上
+    if user_text.startswith("查股價"):
+        try:
+            symbol = user_text.split(" ")[1].upper()
+            price = get_stock_price(symbol)
+
+            if price is not None:
+                reply_text = f"📈 {symbol} 最新價格：${price:.2f}"
+            else:
+                reply_text = f"❗ 無法取得 {symbol} 的股價資訊，請確認代碼是否正確。"
+
+        except IndexError:
+            reply_text = "請輸入股票代碼，例如：查股價 AAPL"
+
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_text)
+        )
+
+    else:
+        default_reply = (
+            "歡迎使用📊市場查詢機器人！\n"
+            "請輸入以下格式來查詢股票資訊：\n\n"
+            "🔹 查股價 AAPL\n🔹 查股價 TSLA\n🔹 查股價 2330.TW"
+        )
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=default_reply)
+        )
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(debug=True)
